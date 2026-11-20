@@ -1,0 +1,1 @@
+"""Local entry point for the native Spec Kit feature workflow."""

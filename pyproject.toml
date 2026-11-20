@@ -1,0 +1,29 @@
+[build-system]
+requires = [
+	"hatchling==1.33.0",
+	"packaging==26.3",
+	"pathspec==1.1.1",
+	"pluggy==1.7.0",
+	"tomlkit==0.15.2",
+	"trove-classifiers==2026.9.21.13",
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "software-factory"
+version = "0.1.0"
+description = "A local entry point for the native Spec Kit feature workflow."
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+build = ["hatchling==1.33.0"]
+validation = [
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+factory = "software_factory.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/software_factory"]

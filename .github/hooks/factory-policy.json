@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "powershell": "& \"$env:FACTORY_REPOSITORY_ROOT\\scripts\\factory_pre_tool_use.ps1\"",
+        "timeout": 5000
+      }
+    ]
+  }
+}
