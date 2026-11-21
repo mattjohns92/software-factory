@@ -18,10 +18,11 @@ POLICY_FIELDS = {
     "read_only_paths",
     "denied_paths",
     "allowed_tools",
+    "allowed_agents",
     "allowed_commands",
 }
 NATIVE_TASK_TOOLS = {"list_agents", "task"}
-READ_ONLY_TASK_TYPES = {"code-review"}
+READ_ONLY_TASK_TYPES = {"code-review", "engineer", "code-reviewer"}
 ALLOWED_TOOLS = {
     "view",
     "read",
@@ -69,6 +70,7 @@ class HostedAuthorization:
 class PolicyDecision:
     allowed: bool
     reason: str
+    permission_decision: str = "allow"
 
 
 def authorize_hosted_use(
@@ -126,9 +128,11 @@ def create_policy(
     read_only_paths: list[str | os.PathLike[str]],
     denied_paths: list[str | os.PathLike[str]],
     allowed_tools: list[str],
+    allowed_agents: list[str] | None = None,
     allowed_commands: list[Mapping[str, str]],
     approved_plan_digest: str | None = None,
     feature_directory: str | os.PathLike[str] | None = None,
+    allow_native_tools: bool = False,
 ) -> dict[str, Any]:
     root = _canonical_path(repository_root)
     policy = {
@@ -140,6 +144,7 @@ def create_policy(
         "read_only_paths": [str(_canonical_path(path)) for path in read_only_paths],
         "denied_paths": [str(_canonical_path(path)) for path in denied_paths],
         "allowed_tools": list(allowed_tools),
+        "allowed_agents": [] if allowed_agents is None else list(allowed_agents),
         "allowed_commands": [
             {
                 "command": item.get("command"),
@@ -168,7 +173,7 @@ def create_policy(
             for path in policy["writable_paths"]
         ):
             raise PolicyError("Planning policies may write only inside the current feature directory")
-    validate_policy(policy, expected_root=root)
+    validate_policy(policy, expected_root=root, allow_native_tools=allow_native_tools)
     return policy
 
 
@@ -228,6 +233,16 @@ def validate_policy(
     if len(set(tools)) != len(tools):
         raise PolicyError("Policy contains duplicate tools")
 
+    agents = policy["allowed_agents"]
+    if not isinstance(agents, list) or any(
+        not isinstance(agent, str) or agent.strip().casefold() not in READ_ONLY_TASK_TYPES
+        for agent in agents
+    ):
+        raise PolicyError("Policy contains an unknown allowed agent")
+    normalized_agents = [agent.strip().casefold() for agent in agents]
+    if len(set(normalized_agents)) != len(normalized_agents):
+        raise PolicyError("Policy contains duplicate allowed agents")
+
     commands = policy["allowed_commands"]
     if not isinstance(commands, list):
         raise PolicyError("allowed_commands must be a list")
@@ -252,15 +267,89 @@ def evaluate_hook_event(policy: Mapping[str, Any], event: Any) -> PolicyDecision
             arguments = json.loads(arguments)
         if not isinstance(tool, str) or not isinstance(arguments, Mapping):
             raise PolicyError("Hook event is missing a tool name or argument object")
-        if tool not in policy["allowed_tools"]:
+        policy_tool = "read" if tool == "view" else tool
+        if policy_tool not in policy["allowed_tools"]:
             raise PolicyError("Tool is not allowlisted")
+        agent_id = event.get("agentId", event.get("agent_id"))
+        agent_type = event.get("agentType", event.get("agent_type"))
+        has_agent_context = any(
+            key in event
+            for key in ("agentId", "agent_id", "agentType", "agent_type")
+        )
+        if has_agent_context:
+            if not isinstance(agent_id, str) or not agent_id.strip():
+                raise PolicyError("Subagent identity is missing or malformed")
+            if (
+                not isinstance(agent_type, str)
+                or agent_type.strip().casefold()
+                not in {agent.casefold() for agent in policy["allowed_agents"]}
+            ):
+                raise PolicyError("Subagent type is not allowlisted")
+            if tool not in READ_TOOLS:
+                raise PolicyError("Subagents are limited to read-only tools")
         if tool == "list_agents":
             return PolicyDecision(True, "Allowed by the explicit native-task policy")
         if tool == "task":
-            task_type = arguments.get("agent_type", arguments.get("agentType"))
-            if task_type not in READ_ONLY_TASK_TYPES:
+            task_type_keys = [
+                key for key in arguments
+                if isinstance(key, str)
+                and key.casefold() in {"agent_type", "agenttype"}
+            ]
+            allowed_task_keys = {
+                "agent_type", "agenttype", "prompt", "description", "mode", "name"
+            }
+            if (
+                any(not isinstance(key, str) for key in arguments)
+                or any(key.casefold() not in allowed_task_keys for key in arguments)
+                or len(task_type_keys) != 1
+            ):
+                raise PolicyError("Task payload is malformed")
+            task_type = arguments[task_type_keys[0]]
+            prompt = arguments.get("prompt")
+            description_present = any(
+                isinstance(key, str) and key.casefold() == "description"
+                for key in arguments
+            )
+            description = next(
+                (
+                    value
+                    for key, value in arguments.items()
+                    if isinstance(key, str) and key.casefold() == "description"
+                ),
+                None,
+            )
+            mode = arguments.get("mode")
+            name = arguments.get("name")
+            mode_present = any(
+                isinstance(key, str) and key.casefold() == "mode"
+                for key in arguments
+            )
+            name_present = any(
+                isinstance(key, str) and key.casefold() == "name"
+                for key in arguments
+            )
+            if (
+                not isinstance(task_type, str)
+                or not task_type.strip()
+                or not isinstance(prompt, str)
+                or not prompt.strip()
+                or (
+                    description_present
+                    and (not isinstance(description, str) or not description.strip())
+                )
+                or (mode_present and (not isinstance(mode, str) or mode.casefold() != "sync"))
+                or (name_present and (not isinstance(name, str) or not name.strip()))
+            ):
+                raise PolicyError("Task payload requires an agent type and non-empty prompt")
+            if task_type.strip().casefold() not in {
+                agent.casefold() for agent in policy["allowed_agents"]
+            }:
                 raise PolicyError("Task agent type is not allowlisted")
-            return PolicyDecision(True, "Allowed by the explicit read-only task policy")
+            return PolicyDecision(
+                True,
+                "Allowed by the explicit read-only task policy; user approval is required",
+                "ask",
+            )
         if tool == "powershell":
             return _evaluate_command(policy, arguments)
 
@@ -279,7 +368,7 @@ def evaluate_hook_event(policy: Mapping[str, Any], event: Any) -> PolicyDecision
                 raise PolicyError("Target path is outside the allowed paths")
         return PolicyDecision(True, "Allowed by the execution policy")
     except (PolicyError, TypeError, ValueError, OSError, json.JSONDecodeError) as error:
-        return PolicyDecision(False, str(error) or "Malformed hook event")
+        return PolicyDecision(False, str(error) or "Malformed hook event", "deny")
 
 
 def _evaluate_command(

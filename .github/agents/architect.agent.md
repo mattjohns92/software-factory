@@ -2,7 +2,7 @@
 name: Architect
 description: Produces a bounded technical approach for approved feature requirements, identifying relevant design decisions and risks.
 include-custom-instructions: true
-infer: false
+infer: true
 tools: ["read", "grep", "glob", "skill"]
 strict-tools-list: true
 ---

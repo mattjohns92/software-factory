@@ -10,3 +10,4 @@ build/
 htmlcov/
 .specify/workflows/runs/
 .factory/
+.github/copilot/settings.local.json

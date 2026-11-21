@@ -2,7 +2,7 @@
 name: Code Reviewer
 description: Reviews an actual change against approved requirements and reports actionable findings without modifying files.
 include-custom-instructions: true
-infer: false
+infer: true
 tools: ["read", "grep", "glob"]
 strict-tools-list: true
 ---

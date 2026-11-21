@@ -2,7 +2,7 @@
 name: QA Engineer
 description: Derives and runs authorized checks from approved requirements and reports exact outcomes without changing acceptance criteria.
 include-custom-instructions: true
-infer: false
+infer: true
 tools: ["read", "grep", "glob", "execute", "skill"]
 strict-tools-list: true
 ---

@@ -96,14 +96,36 @@ try {
         @($Policy.allowed_tools | Select-Object -Unique).Count -ne $Policy.allowed_tools.Count) {
         Write-Deny 'Factory policy contains unknown or duplicate tools.'
     }
+    $KnownAgents = @('engineer', 'code-reviewer', 'code-review')
+    if ($Policy.allowed_agents -isnot [array] -or
+        @($Policy.allowed_agents | Where-Object { $_ -notin $KnownAgents }).Count -gt 0 -or
+        @($Policy.allowed_agents | Select-Object -Unique).Count -ne $Policy.allowed_agents.Count) {
+        Write-Deny 'Factory policy contains unknown or duplicate agents.'
+    }
     $Tool = Get-PropertyValue -Object $Event -Names @('toolName', 'tool_name')
     $Arguments = Get-PropertyValue -Object $Event -Names @('toolArgs', 'tool_input', 'arguments')
     if ($Arguments -is [string]) {
         $Arguments = $Arguments | ConvertFrom-Json
     }
+    $PolicyTool = if ($Tool -eq 'view') { 'read' } else { $Tool }
     if ([string]::IsNullOrWhiteSpace($Tool) -or $null -eq $Arguments -or
-        $Tool -notin $Policy.allowed_tools) {
+        $PolicyTool -notin $Policy.allowed_tools) {
         Write-Deny 'Tool request is malformed or not allowlisted.'
+    }
+
+    $AgentContextNames = @('agentId', 'agent_id', 'agentType', 'agent_type')
+    $HasAgentContext = @($Event.PSObject.Properties.Name | Where-Object { $_ -in $AgentContextNames }).Count -gt 0
+    if ($HasAgentContext) {
+        $AgentId = Get-PropertyValue -Object $Event -Names @('agentId', 'agent_id')
+        $AgentType = Get-PropertyValue -Object $Event -Names @('agentType', 'agent_type')
+        if ([string]::IsNullOrWhiteSpace($AgentId) -or
+            [string]::IsNullOrWhiteSpace($AgentType) -or
+            $AgentType -notin $Policy.allowed_agents) {
+            Write-Deny 'Subagent identity or type is not allowlisted.'
+        }
+        if ($Tool -notin @('view', 'read', 'glob', 'grep')) {
+            Write-Deny 'Subagents are limited to read-only tools.'
+        }
     }
 
     if ($Tool -eq 'powershell') {
@@ -130,11 +152,33 @@ try {
         exit 0
     }
     if ($Tool -eq 'task') {
-        $AgentType = Get-PropertyValue -Object $Arguments -Names @('agent_type', 'agentType')
-        if ($AgentType -ne 'code-review') {
+        $TaskKeys = @($Arguments.PSObject.Properties.Name)
+        $AgentTypeKeys = @($TaskKeys | Where-Object { $_ -in @('agent_type', 'agentType') })
+        $UnknownTaskKeys = @($TaskKeys | Where-Object { $_ -notin @('agent_type', 'agentType', 'prompt', 'description', 'mode', 'name') })
+        $TaskAgentType = Get-PropertyValue -Object $Arguments -Names @('agent_type', 'agentType')
+        $Prompt = Get-PropertyValue -Object $Arguments -Names @('prompt')
+        $DescriptionProperty = $Arguments.PSObject.Properties['description']
+        $ModeProperty = $Arguments.PSObject.Properties['mode']
+        $NameProperty = $Arguments.PSObject.Properties['name']
+        if ($UnknownTaskKeys.Count -gt 0 -or $AgentTypeKeys.Count -ne 1) {
+            Write-Deny 'Task payload is malformed.'
+        }
+        if ([string]::IsNullOrWhiteSpace($TaskAgentType) -or
+            [string]::IsNullOrWhiteSpace($Prompt) -or
+            ($null -ne $DescriptionProperty -and
+                ($DescriptionProperty.Value -isnot [string] -or
+                    [string]::IsNullOrWhiteSpace($DescriptionProperty.Value))) -or
+            ($null -ne $ModeProperty -and
+                ($ModeProperty.Value -isnot [string] -or $ModeProperty.Value -cne 'sync')) -or
+            ($null -ne $NameProperty -and
+                ($NameProperty.Value -isnot [string] -or
+                    [string]::IsNullOrWhiteSpace($NameProperty.Value)))) {
+            Write-Deny 'Task payload requires an agent type and non-empty prompt.'
+        }
+        if ($TaskAgentType -notin $Policy.allowed_agents) {
             Write-Deny 'Task agent type is not allowlisted.'
         }
-        @{ permissionDecision = 'allow' } | ConvertTo-Json -Compress
+        @{ permissionDecision = 'ask' } | ConvertTo-Json -Compress
         exit 0
     }
 

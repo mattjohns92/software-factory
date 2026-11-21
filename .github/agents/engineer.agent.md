@@ -2,7 +2,7 @@
 name: Engineer
 description: Implements one owner-approved task within its stated scope and reports changed paths and actual verification.
 include-custom-instructions: true
-infer: false
+infer: true
 tools: ["read", "grep", "glob", "edit", "execute", "skill"]
 strict-tools-list: true
 ---
