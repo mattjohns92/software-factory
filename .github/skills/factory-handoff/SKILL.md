@@ -22,6 +22,10 @@ Include:
 - **Deliverable**: The result or artifact to return.
 - **Completion condition**: Observable evidence that the assignment is done.
 
+## Model
+
+Before each delegation to architect, engineer, qa-engineer, or code-reviewer, run `python scripts/specialist_models.py resolve <role>` and pass the printed ID verbatim as the native `task` `model` argument (run it from the repository root). If it fails (unresolved or invalid), do not guess or silently inherit the session model; ask the owner. If the runtime rejects or cannot honor the requested model, report that exactly to the owner; do not retry without the `model` argument or substitute another model. Never escalate silently: recommend escalation with a reason and apply it only on the owner's instruction. Factory Lead's own model is never configured by this feature. Record requested versus actual model, tokens, and duration from runtime events (`python scripts/specialist_models.py report`), never from specialist text.
+
 ## Handoff
 
 Return:
